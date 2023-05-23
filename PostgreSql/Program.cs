@@ -1,25 +1,51 @@
 ﻿using System.Diagnostics;
 using Npgsql;
-
-const string connectionString = "Server=127.0.0.1;Port=5432;Database=Sportsbook;User Id=postgres;Password=Sa12345678;Timeout=30;";
+var dbName = "TestDb";
+dbName = dbName.ToLower();
+const string connectionString = "Server=127.0.0.1;Port=5432;User Id=postgres;Password=Sa12345678;Timeout=30;";
 const int connectionCount = 30;
+var fullConnectionString = $"{connectionString};Database={dbName};";
+
+// Check if database exists, if not create a new database
+var exists = await CheckIfDatabaseExists(connectionString);
+if (!exists)
+{
+    await CreateDatabase(connectionString);
+}
 
 for (var i = 0; i < 3; i++)
 {
-    Console.WriteLine($"進行第 {i + 1} 次連接...");
-    await ConnectAndMeasureTime(connectionString, connectionCount);
 
-    // 查詢目前的連線數量
-    var count = await GetActiveConnectionCount(connectionString);
-    Console.WriteLine($"目前的連線數量：{count}");
+    await ConnectAndMeasureTime(fullConnectionString, connectionCount);
 
-    // 在第三次連接後清除連接池
+    // Querying the current number of connections
+    var count = await GetActiveConnectionCount(fullConnectionString);
+    Console.WriteLine($"Current connection count: {count}");
+
+    // Clear connection pool after the third connection
     if (i == 2)
     {
         Console.ReadLine();
-        Console.WriteLine("清除連接池...");
+        Console.WriteLine("Clearing the connection pool...");
         NpgsqlConnection.ClearAllPools();
     }
+}
+
+async Task CreateDatabase(string connection)
+{
+    await using var npgsqlConnection = new NpgsqlConnection(connection);
+    await npgsqlConnection.OpenAsync();
+    await using var cmd = new NpgsqlCommand($"CREATE DATABASE {dbName}", npgsqlConnection);
+    await cmd.ExecuteNonQueryAsync();
+}
+
+async Task<bool> CheckIfDatabaseExists(string connection)
+{
+    await using var npgsqlConnection = new NpgsqlConnection(connection);
+    await npgsqlConnection.OpenAsync();
+    await using var cmd = new NpgsqlCommand($"SELECT 1 FROM pg_database WHERE datname = '{dbName}'", npgsqlConnection);
+    var result = await cmd.ExecuteScalarAsync();
+    return result != null;
 }
 
 async Task ConnectAndMeasureTime(string connection, int numConnections)
@@ -30,10 +56,10 @@ async Task ConnectAndMeasureTime(string connection, int numConnections)
         sw.Start();
 
         await using var npgsqlConnection = new NpgsqlConnection(connection);
-        // 開啟連線
+        // Open connection
         await npgsqlConnection.OpenAsync();
         sw.Stop();
-        Console.WriteLine($"連線 {x} 共耗時 {sw.ElapsedMilliseconds} 毫秒");
+        Console.WriteLine($"Connection {x} took {sw.ElapsedMilliseconds} milliseconds");
     }));
 
     await Task.WhenAll(tasks);
@@ -43,6 +69,6 @@ async Task<long> GetActiveConnectionCount(string connection)
 {
     await using var npgsqlConnection = new NpgsqlConnection(connection);
     await npgsqlConnection.OpenAsync();
-    await using var cmd = new NpgsqlCommand("SELECT count(1) FROM pg_stat_activity WHERE datname = 'Sportsbook'", npgsqlConnection);
+    await using var cmd = new NpgsqlCommand($"SELECT count(1) FROM pg_stat_activity WHERE datname = '{dbName}'", npgsqlConnection);
     return (long)((await cmd.ExecuteScalarAsync() ?? throw new InvalidOperationException()));
 }
